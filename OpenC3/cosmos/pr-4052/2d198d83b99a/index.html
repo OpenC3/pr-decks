@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>body{margin:0}[hidden]{display:none!important}</style>
+</head>
+<body>
+<title>PR #4052 LATEST Handling</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one full-viewport slide at a time over a cool instrument-panel ground;
+   a fixed transport bar at the bottom; "o" flips to a scrolling overview of every slide. */
+:root {
+  --bg: #eef1f5;
+  --surface: #ffffff;
+  --sunken: #e3e8ef;
+  --ink: #132031;
+  --muted: #586779;
+  --line: #cfd7e1;
+  --line-strong: #8d9aab;
+  --accent: #1b5fb4;
+  --accent-soft: #dde8f7;
+  --amber: #a5650b;
+  --amber-soft: #f6ead6;
+  --add: #1c7448;
+  --add-soft: #dcefe4;
+  --del: #b42318;
+  --del-soft: #f8e1df;
+  --font-display: "Archivo", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --radius: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d131b; --surface: #151f2b; --sunken: #1b2735; --ink: #e5ebf2; --muted: #93a2b4;
+    --line: #2a3747; --line-strong: #5b6b7f; --accent: #6ea8f5; --accent-soft: #1b2c42;
+    --amber: #e3a640; --amber-soft: #36290f; --add: #52c48c; --add-soft: #13301f;
+    --del: #f2766b; --del-soft: #3a1915; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d131b; --surface: #151f2b; --sunken: #1b2735; --ink: #e5ebf2; --muted: #93a2b4;
+  --line: #2a3747; --line-strong: #5b6b7f; --accent: #6ea8f5; --accent-soft: #1b2c42;
+  --amber: #e3a640; --amber-soft: #36290f; --add: #52c48c; --add-soft: #13301f;
+  --del: #f2766b; --del-soft: #3a1915; color-scheme: dark;
+}
+
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 17px; line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+code, .mono { font-family: var(--font-mono); font-size: 0.88em; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- Deck engine ---------- */
+.deck { height: 100%; position: relative; }
+.slide {
+  position: absolute; inset: 0 0 56px 0; overflow-y: auto;
+  display: flex; align-items: center; justify-content: center;
+  padding-block: 40px 32px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.frame { width: 100%; max-width: 1120px; display: flex; flex-direction: column; gap: 28px; margin: auto 0; }
+.slide.center .frame { align-items: center; text-align: center; }
+
+/* Capture mode (render.sh): no nav bar, one slide filling the window */
+.capture .navbar { display: none; }
+.capture .slide { inset: 0; overflow: hidden; }
+
+.overview .slide {
+  position: relative; inset: auto; overflow: visible; min-height: 0;
+  border-bottom: 1px solid var(--line); padding-block: 56px; cursor: pointer;
+}
+.overview .slide:hover { background: var(--surface); }
+.overview .deck { height: auto; padding-bottom: 72px; }
+
+.navbar {
+  position: fixed; left: 0; right: 0; bottom: 0; height: calc(56px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; align-items: center; gap: 12px;
+  background: var(--surface); border-top: 1px solid var(--line); z-index: 5;
+}
+.navbar button {
+  font: 500 14px var(--font-body); color: var(--ink); background: var(--sunken);
+  border: 1px solid var(--line); border-radius: var(--radius); height: 34px; min-width: 34px; padding: 0 10px; cursor: pointer;
+}
+.navbar button:hover { border-color: var(--line-strong); }
+.nav-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 14px; }
+.nav-count { font: 500 13px var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.progress { position: absolute; left: 0; top: -1px; height: 2px; background: var(--accent); transition: width .2s ease; }
+@media (prefers-reduced-motion: reduce) { .progress { transition: none; } }
+
+/* ---------- Type ---------- */
+.eyebrow { font: 600 12px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+h1, h2, h3 { font-family: var(--font-display); margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+h1 { font-size: clamp(2.1rem, 5vw, 3.9rem); line-height: 1.04; font-weight: 800; font-stretch: 80%; max-width: 20ch; }
+h2 { font-size: clamp(1.6rem, 3.2vw, 2.6rem); line-height: 1.1; font-weight: 750; font-stretch: 85%; max-width: 28ch; }
+h3 { font-size: 1.15rem; font-weight: 700; font-stretch: 90%; }
+.head { display: flex; flex-direction: column; gap: 10px; }
+.lede { margin: 0; color: var(--muted); font-size: 1.1rem; max-width: 62ch; }
+.note { margin: 0; color: var(--muted); font-size: 0.92rem; max-width: 70ch; }
+.illustrative::after { content: "illustrative example"; margin-left: 8px; font: 500 11px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); border: 1px dashed var(--line-strong); border-radius: 3px; padding: 1px 5px; vertical-align: middle; }
+
+/* ---------- Chips ---------- */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; font: 500 13px var(--font-mono);
+  padding: 3px 9px; border-radius: 999px; background: var(--sunken); color: var(--ink); border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.chip.accent { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+.chip.add, .chip.ok { background: var(--add-soft); border-color: transparent; color: var(--add); }
+.chip.del, .chip.bad { background: var(--del-soft); border-color: transparent; color: var(--del); }
+.chip.warn, .chip.latest { background: var(--amber-soft); border-color: transparent; color: var(--amber); }
+.chip.rb::before, .chip.py::before { content: ""; width: 7px; height: 7px; border-radius: 50%; }
+.chip.rb::before { background: var(--del); }
+.chip.py::before { background: var(--accent); }
+
+/* ---------- Stats ---------- */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; width: 100%; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; }
+.stat b { font: 750 1.9rem/1.1 var(--font-display); font-stretch: 85%; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 0.85rem; color: var(--muted); }
+.stat .add { color: var(--add); } .stat .del { color: var(--del); }
+
+/* ---------- Size bar ---------- */
+.sizebar { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.sizebar .track { display: flex; height: 26px; border-radius: var(--radius); overflow: hidden; gap: 2px; }
+.sizebar .seg { min-width: 4px; }
+.sizebar .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.85rem; color: var(--muted); }
+.sizebar .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.c1 { background: var(--accent); } .c2 { background: var(--amber); } .c3 { background: var(--add); }
+.c4 { background: var(--line-strong); } .c5 { background: var(--del); } .c6 { background: var(--accent-soft); }
+
+/* ---------- Diagram: nodes + flow ---------- */
+.node {
+  background: var(--surface); border: 1.5px solid var(--line-strong); border-radius: var(--radius);
+  padding: 10px 14px; display: flex; flex-direction: column; gap: 2px; min-width: 0;
+  font-size: 0.95rem; line-height: 1.3;
+}
+.node small { color: var(--muted); font-size: 0.78rem; }
+.node.code, .node .code { font-family: var(--font-mono); font-size: 0.85rem; overflow-wrap: anywhere; }
+.node.accent { border-color: var(--accent); background: var(--accent-soft); }
+.node.latest, .node.warn { border-color: var(--amber); background: var(--amber-soft); }
+.node.ok { border-color: var(--add); background: var(--add-soft); }
+.node.bad { border-color: var(--del); background: var(--del-soft); }
+.node.ghost { border-style: dashed; background: transparent; color: var(--muted); }
+.node.strike { text-decoration: line-through; text-decoration-color: var(--del); color: var(--muted); }
+
+.flow { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 0; }
+.flow > .node { flex: 0 1 auto; }
+.arrow { position: relative; flex: 0 0 52px; height: 2px; background: var(--line-strong); margin: 0 6px; align-self: center; }
+.arrow::after { content: ""; position: absolute; right: -1px; top: -5px; border: 6px solid transparent; border-left: 8px solid var(--line-strong); border-right: 0; }
+.arrow[data-label]::before { content: attr(data-label); position: absolute; bottom: 7px; left: 50%; transform: translateX(-50%); font: 500 11px var(--font-mono); color: var(--muted); white-space: nowrap; }
+.arrow.accent { background: var(--accent); } .arrow.accent::after { border-left-color: var(--accent); }
+.arrow.bad { background: var(--del); } .arrow.bad::after { border-left-color: var(--del); }
+.flow.vertical { flex-direction: column; align-items: flex-start; }
+.flow.vertical .arrow { flex: 0 0 28px; width: 2px; height: 28px; margin: 4px 0 4px 22px; align-self: flex-start; }
+.flow.vertical .arrow::after { right: auto; left: -5px; top: auto; bottom: -1px; border: 6px solid transparent; border-top: 8px solid var(--line-strong); border-bottom: 0; }
+.flow.vertical .arrow[data-label]::before { bottom: auto; top: 50%; left: 14px; transform: translateY(-50%); }
+
+/* ---------- Diagram: fan-out (one to many) ---------- */
+.fan { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 0; }
+.fan > .node { position: relative; margin-right: 28px; }
+.fan > .node::after { content: ""; position: absolute; right: -30px; top: 50%; width: 28px; border-top: 2px solid var(--line-strong); }
+.fan-out { display: flex; flex-direction: column; gap: 10px; border-left: 2px solid var(--line-strong); padding-left: 24px; padding-block: 2px; }
+.fan-out > * { position: relative; }
+.fan-out > *::before { content: ""; position: absolute; left: -26px; top: 50%; width: 24px; border-top: 2px solid var(--line-strong); }
+.fan.accent > .node::after, .fan.accent .fan-out, .fan.accent .fan-out > *::before { border-color: var(--accent); }
+
+/* ---------- Diagram: before / after ---------- */
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; width: 100%; }
+.side { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.side-label { font: 600 12px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; display: flex; align-items: center; gap: 8px; }
+.side-label::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.before .side-label { color: var(--del); }
+.after .side-label { color: var(--add); }
+
+/* ---------- Diagram: phases (real sequences only) ---------- */
+.phases { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 0; width: 100%; counter-reset: phase; }
+.phase { position: relative; padding: 16px 20px 16px 18px; background: var(--surface); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; min-width: 0; counter-increment: phase; }
+.phase:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.phase:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+.phase + .phase { border-left: 0; }
+.phase::before { content: counter(phase); font: 700 12px var(--font-mono); color: var(--accent); }
+.phase.bad::before { color: var(--del); } .phase.ok::before { color: var(--add); }
+
+/* ---------- Diagram: lanes (rule per category) ---------- */
+.lanes { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; width: 100%; }
+.lane { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.lane svg { width: 100%; height: auto; max-width: 220px; }
+
+/* ---------- Matrix ---------- */
+.table-wrap { width: 100%; overflow-x: auto; }
+table.matrix { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+.matrix th { text-align: left; font: 600 12px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 8px 12px; border-bottom: 2px solid var(--line-strong); }
+.matrix td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.matrix td:first-child { font-weight: 600; white-space: nowrap; }
+.matrix .was { color: var(--del); } .matrix .now { color: var(--add); }
+.matrix .was::before { content: "✕ "; } .matrix .now::before { content: "✓ "; }
+
+/* ---------- Code + callouts ---------- */
+.snippet { background: var(--sunken); border-radius: var(--radius); padding: 12px 16px; font: 13.5px/1.55 var(--font-mono); overflow-x: auto; margin: 0; white-space: pre; max-width: 100%; }
+.snippet .a { color: var(--add); } .snippet .d { color: var(--del); } .snippet .m { color: var(--muted); }
+.bullets { margin: 0; padding-left: 1.1em; display: flex; flex-direction: column; gap: 6px; font-size: 0.95rem; max-width: 70ch; }
+.bullets li::marker { color: var(--accent); }
+.lane .note, .check .note, .side .note { font-size: 0.88rem; }
+.callout { border-left: 3px solid var(--amber); background: var(--amber-soft); padding: 12px 16px; border-radius: 0 var(--radius) var(--radius) 0; font-size: 0.95rem; max-width: 75ch; }
+.callout.bad { border-color: var(--del); background: var(--del-soft); }
+.callout.ok { border-color: var(--add); background: var(--add-soft); }
+
+/* ---------- Checklist / review items ---------- */
+.checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; width: 100%; }
+.check { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.check .tag { align-self: flex-start; }
+
+/* ---------- Layout helpers ---------- */
+.row { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; width: 100%; }
+.cols > * { min-width: 0; }
+.stack { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.diagram { width: 100%; overflow-x: auto; }
+.diagram svg { display: block; max-width: 100%; height: auto; }
+
+/* Inline SVG drawing classes, so hand-drawn diagrams follow the theme */
+.sv-line { stroke: var(--line-strong); fill: none; stroke-width: 2; }
+.sv-faint { stroke: var(--line); fill: none; stroke-width: 1; }
+.sv-accent { stroke: var(--accent); fill: none; stroke-width: 2; }
+.sv-amber { stroke: var(--amber); fill: none; stroke-width: 2; }
+.sv-bad { stroke: var(--del); fill: none; stroke-width: 2; }
+.sv-ok { stroke: var(--add); fill: none; stroke-width: 2; }
+.sv-dash { stroke-dasharray: 5 4; }
+.sv-fill-surface { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.5; }
+.sv-fill-accent { fill: var(--accent); }
+.sv-fill-amber { fill: var(--amber); }
+.sv-fill-bad { fill: var(--del); }
+.sv-fill-ok { fill: var(--add); }
+.sv-fill-muted { fill: var(--line-strong); }
+.sv-text { fill: var(--ink); font: 500 13px var(--font-mono); }
+.sv-label { fill: var(--muted); font: 500 11px var(--font-mono); letter-spacing: .04em; }
+.sv-text-accent { fill: var(--accent); font: 600 13px var(--font-mono); }
+.sv-text-amber { fill: var(--amber); font: 600 13px var(--font-mono); }
+.sv-text-bad { fill: var(--del); font: 600 13px var(--font-mono); }
+
+@media (max-width: 760px) {
+  body { font-size: 16px; }
+  .slide { padding-block: 24px 20px; align-items: flex-start; }
+  .compare, .cols { grid-template-columns: 1fr; }
+  .phases { grid-auto-flow: row; }
+  .phase:first-child { border-radius: var(--radius) var(--radius) 0 0; }
+  .phase:last-child { border-radius: 0 0 var(--radius) var(--radius); }
+  .phase + .phase { border-left: 1px solid var(--line); border-top: 0; }
+  .flow:not(.keep) { flex-direction: column; align-items: flex-start; }
+  .flow:not(.keep) .arrow { flex: 0 0 24px; width: 2px; height: 24px; margin: 4px 0 4px 22px; align-self: flex-start; }
+  .flow:not(.keep) .arrow::after { right: auto; left: -5px; top: auto; bottom: -1px; border: 6px solid transparent; border-top: 8px solid var(--line-strong); border-bottom: 0; }
+  .flow:not(.keep) .arrow[data-label]::before { bottom: auto; top: 50%; left: 14px; transform: translateY(-50%); }
+  .nav-title { display: none; }
+}
+</style>
+
+<main class="deck" id="deck">
+<section class="slide title" data-title="Overview">
+  <div class="frame">
+    <div class="head">
+      <div class="eyebrow">OpenC3/cosmos · PR #4052 · Open</div>
+      <h1>LATEST works wherever it can, and fails clearly where it can't</h1>
+      <p class="lede">LATEST resolves an item to whichever packet received it most recently. Several APIs ignored that, resolved it against the wrong scope or time, or accepted it where it can't name a packet. This PR fixes each case in Ruby and Python.</p>
+      <div class="chips">
+        <span class="chip">jmthomas</span>
+        <span class="chip mono">fix/latest-streaming-and-limits → main</span>
+        <span class="chip rb">Ruby</span>
+        <span class="chip py">Python</span>
+        <span class="chip">cmd-tlm-api</span>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat"><b class="add">+1,997</b><span>lines added</span></div>
+      <div class="stat"><b class="del">−522</b><span>lines removed</span></div>
+      <div class="stat"><b>31</b><span>files, 2 new</span></div>
+      <div class="stat"><b>18</b><span>commits (4 merges)</span></div>
+    </div>
+    <div class="sizebar">
+      <div class="track">
+        <div class="seg c2" style="flex:768"></div>
+        <div class="seg c1" style="flex:601"></div>
+        <div class="seg c5" style="flex:93"></div>
+        <div class="seg c4" style="flex:1057"></div>
+      </div>
+      <div class="legend">
+        <span><i class="c2"></i>Python source 768</span>
+        <span><i class="c1"></i>Ruby source 601</span>
+        <span><i class="c5"></i>Streaming API 93</span>
+        <span><i class="c4"></i>Tests 1,057</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="How LATEST resolved, and where it broke">
+  <div class="frame">
+    <div class="head">
+      <div class="eyebrow">Before</div>
+      <h2>One resolution rule was applied to every call</h2>
+      <p class="lede">Every API resolved LATEST to the single packet received most recently, right now. That's correct for a live read, and wrong almost everywhere else.</p>
+    </div>
+    <div class="flow">
+      <div class="node latest code">INST LATEST TEMP1</div>
+      <span class="arrow"></span>
+      <div class="node code">get_item_to_packet_map<small>TargetModel</small></div>
+      <span class="arrow" data-label="candidates"></span>
+      <div class="stack">
+        <div class="node code">PKT_A</div>
+        <div class="node code">PKT_B</div>
+      </div>
+      <span class="arrow"></span>
+      <div class="node code">determine_latest_packet_for_item<small>CvtModel</small></div>
+      <span class="arrow accent"></span>
+      <div class="node accent code">PKT_B<small>newest right now</small></div>
+    </div>
+    <div class="table-wrap">
+      <table class="matrix">
+        <thead><tr><th>Area</th><th>Before</th><th>After</th></tr></thead>
+        <tbody>
+          <tr><td>Streaming</td><td class="was">LATEST and explicit subscriptions collide</td><td class="now">Distinct IDs, removed independently</td></tr>
+          <tr><td>get_limits</td><td class="was">Authorizes the literal <code>LATEST</code>, wrong scope</td><td class="now">Resolves in caller's scope, authorizes real packet</td></tr>
+          <tr><td>Item map cache</td><td class="was">Shared across scopes</td><td class="now">Keyed per scope</td></tr>
+          <tr><td>Writes</td><td class="was">Change one packet</td><td class="now">Change every packet with the item</td></tr>
+          <tr><td>History</td><td class="was">Packet newest <em>now</em></td><td class="now">Packet newest at <code>start_time</code></td></tr>
+          <tr><td>Whole-packet APIs</td><td class="was">Accept LATEST ambiguously</td><td class="now">Clear LATEST error</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note illustrative">PKT_A and PKT_B stand in for any packets that share an item.</p>
+  </div>
+</section>
+
+<section class="slide" data-title="One rule per kind of call">
+  <div class="frame">
+    <div class="head">
+      <div class="eyebrow">The model</div>
+      <h2>Each kind of call now gets its own LATEST rule</h2>
+    </div>
+    <div class="lanes">
+      <div class="lane">
+        <svg viewBox="0 0 220 80" role="img" aria-label="One source resolves to one packet">
+          <circle cx="24" cy="40" r="10" class="sv-fill-amber"/>
+          <line x1="36" y1="40" x2="150" y2="14" class="sv-faint sv-dash"/>
+          <line x1="36" y1="40" x2="150" y2="40" class="sv-accent"/>
+          <line x1="36" y1="40" x2="150" y2="66" class="sv-faint sv-dash"/>
+          <rect x="156" y="5" width="52" height="18" rx="3" class="sv-fill-surface"/>
+          <rect x="156" y="31" width="52" height="18" rx="3" class="sv-fill-accent"/>
+          <rect x="156" y="57" width="52" height="18" rx="3" class="sv-fill-surface"/>
+        </svg>
+        <h3>Live read → newest one</h3>
+        <p class="note">Unchanged behavior, but get_limits now resolves before it authorizes.</p>
+        <div class="chips"><span class="chip">get_tlm_values</span><span class="chip">get_limits</span><span class="chip">tlm</span></div>
+      </div>
+      <div class="lane">
+        <svg viewBox="0 0 220 80" role="img" aria-label="One source fans out to every packet">
+          <circle cx="24" cy="40" r="10" class="sv-fill-amber"/>
+          <line x1="36" y1="40" x2="150" y2="14" class="sv-accent"/>
+          <line x1="36" y1="40" x2="150" y2="40" class="sv-accent"/>
+          <line x1="36" y1="40" x2="150" y2="66" class="sv-accent"/>
+          <rect x="156" y="5" width="52" height="18" rx="3" class="sv-fill-accent"/>
+          <rect x="156" y="31" width="52" height="18" rx="3" class="sv-fill-accent"/>
+          <rect x="156" y="57" width="52" height="18" rx="3" class="sv-fill-accent"/>
+        </svg>
+        <h3>Write → every packet</h3>
+        <p class="note">Authorize every packet, validate every packet, then write each one. Any failure stops before a change.</p>
+        <div class="chips"><span class="chip">override_tlm</span><span class="chip">normalize_tlm</span><span class="chip">set_limits</span><span class="chip">set_state_color</span><span class="chip">enable/disable_limits</span></div>
+      </div>
+      <div class="lane">
+        <svg viewBox="0 0 220 80" role="img" aria-label="Pick the newest packet before the requested time">
+          <line x1="10" y1="56" x2="210" y2="56" class="sv-line"/>
+          <circle cx="40" cy="56" r="6" class="sv-fill-muted"/>
+          <circle cx="92" cy="56" r="7" class="sv-fill-accent"/>
+          <circle cx="178" cy="56" r="6" class="sv-fill-muted"/>
+          <line x1="130" y1="12" x2="130" y2="70" class="sv-amber"/>
+          <text x="136" y="22" class="sv-text-amber">t</text>
+          <path d="M126 36 Q110 30 98 46" class="sv-accent"/>
+        </svg>
+        <h3>History → newest at time t</h3>
+        <p class="note">Every candidate packet is queried, and the newest one at the requested time wins.</p>
+        <div class="chips"><span class="chip">get_tlm_values(start_time)</span><span class="chip">get_tlm_available</span></div>
+      </div>
+      <div class="lane">
+        <svg viewBox="0 0 220 80" role="img" aria-label="Rejected">
+          <circle cx="24" cy="40" r="10" class="sv-fill-amber"/>
+          <line x1="36" y1="40" x2="120" y2="40" class="sv-bad"/>
+          <line x1="136" y1="26" x2="164" y2="54" class="sv-bad" style="stroke-width:4"/>
+          <line x1="164" y1="26" x2="136" y2="54" class="sv-bad" style="stroke-width:4"/>
+        </svg>
+        <h3>Whole packet → error</h3>
+        <p class="note">LATEST picks a packet per item, so it can't name a whole packet.</p>
+        <div class="chips"><span class="chip">get_tlm</span><span class="chip">get_tlm_packet</span><span class="chip">get_tlm_buffer</span><span class="chip">get_tlm_cnt</span><span class="chip">wait_packet</span><span class="chip">+3</span></div>
+      </div>
+    </div>
+    <pre class="snippet"><span class="a">ERROR: LATEST is not supported by get_tlm(), specify a packet name</span></pre>
+  </div>
+</section>
+
+<section class="slide" data-title="Streaming, scope and authorization">
+  <div class="frame">
+    <div class="head">
+      <div class="eyebrow">Streaming · get_limits · TargetModel</div>
+      <h2>LATEST gets its own identity, scope and permission check</h2>
+    </div>
+    <div class="cols">
+      <div class="stack">
+        <h3>Streaming subscription ID</h3>
+        <div class="compare">
+          <div class="side before">
+            <div class="side-label">Before</div>
+            <div class="node code">INST HEALTH_STATUS TEMP1</div>
+            <div class="node latest code">INST LATEST TEMP1<small>→ HEALTH_STATUS</small></div>
+            <div class="node bad code">ITEM__{key}<small>same ID, one is lost</small></div>
+          </div>
+          <div class="side after">
+            <div class="side-label">After</div>
+            <div class="node ok code">ITEM__{key}__{source_key}__{item_key}</div>
+            <p class="note">Both subscriptions coexist, and removal matches on source_key so removing one leaves the other.</p>
+          </div>
+        </div>
+        <ul class="bullets">
+          <li>Packets the user can't access are skipped; the request fails only if none are accessible.</li>
+          <li>LATEST on a command stream is rejected, since the item map covers telemetry only.</li>
+        </ul>
+      </div>
+      <div class="stack">
+        <h3>Item map cache key</h3>
+        <div class="flow keep">
+          <div class="node strike code">INST</div>
+          <span class="arrow accent"></span>
+          <div class="node ok code">DEFAULT__INST__item_to_packet_map</div>
+        </div>
+        <p class="note">The same target name can exist in several scopes, so a shared key let LATEST resolve against another scope's packets.</p>
+        <h3>get_limits order</h3>
+        <div class="flow vertical">
+          <div class="node strike code">authorize(packet: "LATEST")</div>
+          <span class="arrow" data-label="now"></span>
+          <div class="node code">resolve LATEST with caller's scope<small>was $openc3_scope</small></div>
+          <span class="arrow accent"></span>
+          <div class="node accent code">authorize(resolved packet)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="History lookups">
+  <div class="frame">
+    <div class="head">
+      <div class="eyebrow">History · get_tlm_values · QuestDB</div>
+      <h2>History asks which packet was newest then</h2>
+      <p class="lede">The packet newest now may not have been newest at start_time. Each candidate is now queried with its PACKET_TIMESECONDS and the newest wins. Ranges do the same row by row.</p>
+    </div>
+    <div class="diagram">
+      <svg viewBox="0 0 780 220" role="img" aria-label="Timeline: before used the packet newest now, after uses the packet newest at start_time">
+        <text x="20" y="74" class="sv-text">PKT_A</text>
+        <text x="20" y="144" class="sv-text">PKT_B</text>
+        <line x1="90" y1="70" x2="760" y2="70" class="sv-faint"/>
+        <line x1="90" y1="140" x2="760" y2="140" class="sv-faint"/>
+        <circle cx="200" cy="70" r="8" class="sv-fill-muted"/>
+        <text x="186" y="52" class="sv-label">21.0</text>
+        <circle cx="640" cy="70" r="8" class="sv-fill-muted"/>
+        <text x="626" y="52" class="sv-label">25.3</text>
+        <circle cx="360" cy="140" r="9" class="sv-fill-ok"/>
+        <text x="346" y="170" class="sv-label">18.4</text>
+        <line x1="480" y1="26" x2="480" y2="186" class="sv-amber"/>
+        <text x="446" y="20" class="sv-text-amber">start_time</text>
+        <line x1="710" y1="26" x2="710" y2="186" class="sv-line sv-dash"/>
+        <text x="698" y="20" class="sv-label">now</text>
+        <path d="M478 86 C 400 100, 280 100, 210 78" class="sv-bad sv-dash"/>
+        <text x="190" y="112" class="sv-text-bad">before: PKT_A, newest now → 21.0</text>
+        <path d="M478 132 C 440 132, 400 134, 372 138" class="sv-ok"/>
+        <text x="392" y="208" class="sv-text-accent">after: newest at start_time → 18.4</text>
+      </svg>
+    </div>
+    <div class="cols">
+      <div class="stack">
+        <h3>QuestDB query fixes</h3>
+        <div class="chips">
+          <span class="chip ok">every column aliased (VALUE_2 broke decoding)</span>
+          <span class="chip ok">each candidate asks for its own value type</span>
+          <span class="chip ok">packets without a table skipped</span>
+        </div>
+      </div>
+      <div class="stack">
+        <h3>Python parity fix</h3>
+        <div class="flow keep">
+          <div class="node code">DERIVED + conversion</div>
+          <span class="arrow accent"></span>
+          <div class="node ok code">RAW<small>was CONVERTED → missing __C column</small></div>
+        </div>
+      </div>
+    </div>
+    <p class="note">A range of only LATEST items has no regular item to drive rows, so it keeps the "newest now" behavior.</p>
+    <p class="note illustrative">Timeline values are made up.</p>
+  </div>
+</section>
+
+<section class="slide" data-title="Tests, CI and review focus">
+  <div class="frame">
+    <div class="head">
+      <div class="eyebrow">Verify and review</div>
+      <h2>Well tested, and the PR's own CI failures are fixed</h2>
+      <p class="lede">About 1,060 lines of new tests cover both languages. The new QuestDB integration specs (<code>*latest_tsdb*</code>) are still unticked in the test plan.</p>
+    </div>
+    <div class="sizebar">
+      <div class="track">
+        <div class="seg c2" style="flex:514"></div>
+        <div class="seg c1" style="flex:425"></div>
+        <div class="seg c5" style="flex:118"></div>
+      </div>
+      <div class="legend">
+        <span><i class="c2"></i>Python tests 514</span>
+        <span><i class="c1"></i>Ruby specs 425</span>
+        <span><i class="c5"></i>Streaming API specs 118</span>
+      </div>
+    </div>
+    <div class="checks">
+      <div class="check"><span class="chip ok tag">Fixed · unit-test (3.4)</span><h3>Nested <code>add</code> no longer flagged</h3><span class="note">The API docs check now skips the internal helper in tlm_api.py (8e4a212).</span></div>
+      <div class="check"><span class="chip ok tag">Fixed · ty</span><h3>No possible None in history</h3><span class="note"><code>positions</code> is now a dict keyed by item index (2d198d8).</span></div>
+      <div class="check"><span class="chip tag">Unrelated · ruff, Trivy UBI</span><h3>Dependency vulnerabilities</h3><span class="note">Both fail on fixable vulnerabilities in dependencies and images, not on this change.</span></div>
+      <div class="check"><span class="chip warn tag">Behavior</span><h3>LATEST writes hit every packet</h3><span class="note">Intended, but scripts that relied on changing one packet will see different results.</span></div>
+      <div class="check"><span class="chip warn tag">Atomicity</span><h3>Validated, not transactional</h3><span class="note">Writes are sequential, so a store error mid-loop can still partly apply.</span></div>
+      <div class="check"><span class="chip accent tag">Performance</span><h3>More QuestDB queries</h3><span class="note">Point-in-time history runs one query per candidate packet, plus a tables() lookup.</span></div>
+    </div>
+  </div>
+</section>
+</main>
+
+<nav class="navbar" aria-label="Slide navigation">
+  <div class="progress" id="progress"></div>
+  <button type="button" id="prev" aria-label="Previous slide">←</button>
+  <button type="button" id="next" aria-label="Next slide">→</button>
+  <span class="nav-count" id="count">1 / 1</span>
+  <span class="nav-title" id="navtitle"></span>
+  <button type="button" id="overview" aria-pressed="false">All slides</button>
+  <button type="button" id="fullscreen" aria-label="Full screen" title="Full screen (f)" hidden>⛶</button>
+</nav>
+
+<script>
+(() => {
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  const total = slides.length;
+  const $ = (id) => document.getElementById(id);
+  let index = 0;
+  let overview = false;
+
+  function titleOf(slide) {
+    if (slide.dataset.title) return slide.dataset.title;
+    const h = slide.querySelector('h1, h2');
+    return h ? h.textContent.trim() : '';
+  }
+
+  function show(n) {
+    index = Math.max(0, Math.min(total - 1, n));
+    slides.forEach((slide, k) => { slide.hidden = !overview && k !== index; });
+    $('count').textContent = `${index + 1} / ${total}`;
+    $('navtitle').textContent = titleOf(slides[index]);
+    $('progress').style.width = `${((index + 1) / total) * 100}%`;
+    try { history.replaceState(null, '', `#${index + 1}`); } catch (e) { /* sandboxed */ }
+    if (!overview) slides[index].scrollTop = 0;
+  }
+
+  function setOverview(on) {
+    overview = on;
+    document.body.classList.toggle('overview', on);
+    $('overview').setAttribute('aria-pressed', String(on));
+    $('overview').textContent = on ? 'Present' : 'All slides';
+    show(index);
+    if (on) slides[index].scrollIntoView({ block: 'start' });
+  }
+
+  $('prev').addEventListener('click', () => show(index - 1));
+  $('next').addEventListener('click', () => show(index + 1));
+  $('overview').addEventListener('click', () => setOverview(!overview));
+
+  // Fullscreen is optional: some embedded viewers refuse it, so hide the button there
+  function toggleFullscreen() {
+    const request = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+    if (request && request.catch) request.catch(() => { $('fullscreen').hidden = true; });
+  }
+  if (document.fullscreenEnabled) $('fullscreen').hidden = false;
+  $('fullscreen').addEventListener('click', toggleFullscreen);
+  slides.forEach((slide, k) => slide.addEventListener('click', () => {
+    if (overview) { index = k; setOverview(false); }
+  }));
+
+  document.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (['ArrowRight', 'PageDown', ' '].includes(e.key)) { e.preventDefault(); show(index + 1); }
+    else if (['ArrowLeft', 'PageUp'].includes(e.key)) { e.preventDefault(); show(index - 1); }
+    else if (e.key === 'Home') show(0);
+    else if (e.key === 'End') show(total - 1);
+    else if (e.key === 'o' || e.key === 'Escape') setOverview(e.key === 'o' ? !overview : false);
+    else if (e.key === 'f' && document.fullscreenEnabled) toggleFullscreen();
+  });
+
+  let touchX = null;
+  document.addEventListener('touchstart', (e) => { touchX = e.touches[0].clientX; }, { passive: true });
+  document.addEventListener('touchend', (e) => {
+    if (touchX === null || overview) return;
+    const dx = e.changedTouches[0].clientX - touchX;
+    if (Math.abs(dx) > 60) show(index + (dx < 0 ? 1 : -1));
+    touchX = null;
+  });
+
+  const start = parseInt((location.hash || '').replace('#', ''), 10);
+  show(Number.isFinite(start) ? start - 1 : 0);
+
+  // render.sh opens deck.html?capture=1&theme=light#3 to screenshot one slide.
+  // Shrink a slide whose content is taller than the window so nothing is cut off.
+  const params = new URLSearchParams(location.search);
+  if (params.has('capture')) {
+    const root = document.documentElement;
+    root.classList.add('capture');
+    if (params.get('theme')) root.dataset.theme = params.get('theme');
+    const fit = () => {
+      const slide = slides[index];
+      const frame = slide.querySelector('.frame');
+      if (!frame) return;
+      frame.style.zoom = 1;
+      const style = getComputedStyle(slide);
+      const available = slide.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+      if (frame.scrollHeight > available) frame.style.zoom = available / frame.scrollHeight;
+      root.dataset.captureReady = 'true';
+    };
+    fit();
+    if (document.fonts) document.fonts.ready.then(fit);
+  }
+})();
+</script>
+
+</body>
+</html>
